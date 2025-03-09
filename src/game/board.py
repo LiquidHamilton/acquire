@@ -21,7 +21,7 @@ class Board:
             neighbors.append((col, row+1))
         return neighbors
 
-    def place_tile(self, col, row, placer):
+    def place_tile(self, col, row, placer, corporations=None):
         """
         Place a tile at (col, row) and determine hotel chain affiliation.
         Returns:
@@ -38,9 +38,10 @@ class Board:
         neighbors = self.get_neighbors(col, row)
         adjacent_chains = set()
         adjacent_independents = []
+
         for (nc, nr) in neighbors:
             cell = self.state[nc][nr]
-            if cell is not None:
+            if cell:
                 if cell["chain"] is not None:
                     adjacent_chains.add(cell["chain"])
                 else:
@@ -64,9 +65,13 @@ class Board:
 
         # Case 4: Adjacent independents (and no chain) – new chain founding.
         if len(adjacent_chains) == 0 and len(adjacent_independents) > 0:
-            # Place tile as independent temporarily
-            self.state[col][row] = {"owner": placer, "chain": None}
-            return "new_chain"
+            if corporations and all(corp.size > 0 for corp in corporations.values()):
+                return "blocked"  # Can't found new chain
+            else:
+                self.state[col][row] = {"owner": placer, "chain": None}
+                return "new_chain"
+
+        print(f"Placed at ({col}, {row}). Neighbors: {neighbors}")
 
     def found_chain(self, col, row, chain_name):
         """Convert ALL connected independents (including the placed tile) to this chain"""
@@ -76,7 +81,7 @@ class Board:
 
         while stack:
             c, r = stack.pop()
-            if (c, r) in visited:
+            if (c, r) in visited or not (0 <= c < BOARD_WIDTH and 0 <= r < BOARD_HEIGHT):
                 continue
             visited.add((c, r))
 
@@ -87,11 +92,10 @@ class Board:
                 continue
 
             cell = self.state[c][r]
-            if cell["chain"] is None:
+            if cell and cell["chain"] is None:
                 cell["chain"] = chain_name
                 absorbed += 1
-                # Add neighbors
-                stack.extend(self.get_neighbors(c, r))
+                stack.extend(self.get_neighbors(c, r))  # Flood-fill
 
         return absorbed
 
@@ -108,8 +112,11 @@ class Board:
                 max_size = corp.size
                 max_value = corp.current_value
 
+        # Add the merger tile to the dominant chain
+        self.state[col][row] = {"owner": "Merged", "chain": dominant}
+
         losing_chains = [c for c in adjacent_chains if c != dominant]
-        absorbed_count = 0
+        absorbed_count = 1
 
         # Update board state
         for c in range(BOARD_WIDTH):

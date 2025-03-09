@@ -4,6 +4,8 @@ from utils.constants import *
 from utils.constants import CORPORATION_COLORS
 from utils.helpers import *
 
+#TODO: Not properly absorbing independent tiles.
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -132,7 +134,14 @@ class Game:
                             if icon_rect.collidepoint(mouse_x, mouse_y):
                                 self.selected_tile_index = i
                                 col, row = tile_coord
-                                result = self.board.place_tile(col, row, "HumanTile")
+                                result = self.board.place_tile(col, row, "HumanTile", self.corporations)
+
+                                if result == "blocked":
+                                    msg = f"Cannot place {col+1}{chr(65+row)}: All corporations active. Keep tile for later."
+                                    self.log_messages.append(msg)
+                                    self.selected_tile_index = None # Deselect tile
+                                    return # Stay in tile placement phase
+                                
                                 if result == "new_chain":
                                     self.available_chains = [c for c in self.corporations.values() if c.size == 0 and c.stocks_remaining > 0]
                                     if not self.available_chains:
@@ -328,14 +337,20 @@ class Game:
         # --- Draw Hotel Status from Corporations ---
         sidebar_font = pygame.font.SysFont(None, 20)
         line_height = 22
-        status_texts = []
-        for corp in self.corporations.values():
-            status_texts.append(
-                f"{corp.name}: Size {corp.size}, Value ${corp.current_value}, Stocks {corp.stocks_remaining}"
-            )
-        for i, text in enumerate(status_texts):
-            text_surface = sidebar_font.render(text, True, (255, 255, 255))
-            self.screen.blit(text_surface, (status_area.x + 5, status_area.y + 5 + i * line_height))
+        for i, corp in enumerate(self.corporations.values()):
+            # Render corporation name in its color
+            name_surface = sidebar_font.render(corp.name, True, corp.color)
+            # Render other details in white
+            details_text = f": Size {corp.size}, Value ${corp.current_value}, Stocks {corp.stocks_remaining}"
+            details_surface = sidebar_font.render(details_text, True, (255, 255, 255))
+            
+            # Combine surfaces horizontally
+            total_width = name_surface.get_width() + details_surface.get_width()
+            combined_surface = pygame.Surface((total_width, line_height), pygame.SRCALPHA)
+            combined_surface.blit(name_surface, (0, 0))
+            combined_surface.blit(details_surface, (name_surface.get_width(), 0))
+            
+            self.screen.blit(combined_surface, (status_area.x + 5, status_area.y + 5 + i * line_height))
 
         
         # --- Draw Log Messages in the Log Area ---
@@ -350,15 +365,38 @@ class Game:
         human_player = self.players[0]
         player_font = pygame.font.SysFont(None, 20)
         line_height = 22
-        
+
         # Left half: text info
         info_lines = [
             f"Player: {human_player.name}",
-            f"Money: ${human_player.money}"
+            f"Money: ${human_player.money}",
+            "Stocks:"
         ]
         for i, line in enumerate(info_lines):
             text_surface = player_font.render(line, True, (255, 255, 255))
             self.screen.blit(text_surface, (player_info_area.x + 5, player_info_area.y + 5 + i * line_height))
+
+        # Stocks with colored names
+        stock_start_y = player_info_area.y + 5 + (len(info_lines)) * line_height
+        current_y = stock_start_y
+
+        for corp in self.corporations.values():
+            if human_player.stocks[corp.name] == 0:
+                continue
+            
+            # Render corporation name in its color
+            name_surface = player_font.render(f"{corp.name}: ", True, corp.color)
+            # Render stock count in white
+            count_surface = player_font.render(str(human_player.stocks[corp.name]), True, (255, 255, 255))
+            
+            # Combine and blit
+            total_width = name_surface.get_width() + count_surface.get_width()
+            combined_surface = pygame.Surface((total_width, line_height), pygame.SRCALPHA)
+            combined_surface.blit(name_surface, (0, 0))
+            combined_surface.blit(count_surface, (name_surface.get_width(), 0))
+            
+            self.screen.blit(combined_surface, (player_info_area.x + 5, current_y))
+            current_y += line_height
         
         # Right half: hand area
         hand_area = pygame.Rect(
