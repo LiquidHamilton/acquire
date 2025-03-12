@@ -32,24 +32,7 @@ class Corporation:
         self.size += count
     
     def update_value(self):
-        if self.size < 2:
-            self.current_value = 0
-        elif self.size < 11:
-            # Lookup table based on the rulebook chart.
-            price_chart = {
-                2: 2000,
-                3: 3000,
-                4: 4000,
-                5: 5000,
-                6: 6000,
-                7: 7000,
-                8: 8000,
-                9: 9000,
-                10: 10000,
-            }
-            self.current_value = price_chart.get(self.size, 0)
-        else:
-            self.current_value = 11000
+        self.current_value = self.get_stock_price()
 
     
     def remove_stocks(self, quantity):
@@ -61,7 +44,7 @@ class Corporation:
             self.stocks_remaining -= quantity
             return True
         return False
-    
+
     def add_stocks(self, quantity):
         """Add stocks back (for example, after a merger resolution)."""
         self.stocks_remaining += quantity
@@ -74,7 +57,33 @@ class Corporation:
         if not self.headquarters_placed:
             self.headquarters_placed = True
             self.hq_position = (col, row)
-    
+
+    def get_shareholders_bonus(self):
+        pass
+
+    def set_shareholder_bonus(self):
+        pass
+
+    def get_stock_price(self):
+        if self.size < 2:
+            return 0
+        if self.name == "Worldwide" or "Sackson":
+            price_chart = {2: 200, 3: 300, 4: 400, 5: 500,
+                        6: 600, 7: 700, 8: 800, 9: 900,
+                        10: 1000, 11: 1100
+            }
+        elif self.name == "Festival" or "Imperial" or "American":
+            price_chart = {2: 200, 3: 300, 4: 400, 5: 500,
+                        6: 600, 7: 700, 8: 800, 9: 900,
+                        10: 1000, 11: 1100
+            }
+        elif self.name == "Continental" or "Tower":
+            price_chart = {2: 200, 3: 300, 4: 400, 5: 500,
+                        6: 600, 7: 700, 8: 800, 9: 900,
+                        10: 1000, 11: 1100
+            }
+        return price_chart.get(self.size, 1100)
+
     def __str__(self):
         return (f"Corporation {self.name} | Size: {self.size} | Value: ${self.current_value} | "
                 f"Stocks remaining: {self.stocks_remaining} | Safe: {self.is_safe()}")

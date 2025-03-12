@@ -10,6 +10,9 @@ class Player:
         self.tiles_in_hand = []
         self.stocks = {chain: 0 for chain in CORPORATION_COLORS.keys()}
 
+    def get_money(self):
+        return self.money
+
     def add_tile(self, tile):
         """Add a tile to the player's hand."""
         self.tiles_in_hand.append(tuple(tile))
@@ -25,14 +28,15 @@ class Player:
         total_cost = quantity * price_per_stock
         if self.money >= total_cost:
             self.money -= total_cost
-            self.stocks[chain] += quantity
+            self.stocks[chain] = self.stocks.get(chain, 0) + quantity
             return True
         return False
-    
+
     def sell_stock(self, chain, quantity, price_per_stock):
         """Sell a given quantity of stock, returning the money gained."""
-        if self.stocks.get(chain, 0) >= quantity:
-            self.stocks[chain] -= quantity
+        current_stocks = self.stocks.get(chain, 0)
+        if current_stocks >= quantity:
+            self.stocks[chain] = current_stocks - quantity
             self.money += quantity * price_per_stock
             return True
         return False

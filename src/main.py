@@ -5,6 +5,13 @@ from utils.constants import CORPORATION_COLORS
 from utils.helpers import *
 
 #TODO: Not properly absorbing independent tiles.
+#TODO: Stock market buttons are not aligned correctly with clicks
+#TODO: Endgame & Scoring
+#TODO: Stock Price Calculation not basing on size properly
+#TODO: Stop from allowing buying negative stocks. Cap at 25 per corp.
+#TODO: Merger resolution on AI turn does not open window for player to act. (they should act in turn order)
+#TODO: Players not increasing their money after merger resolution (do stocks replenish?)
+#TODO: Multi Merging (3 or more corps)
 
 class Game:
     def __init__(self):
@@ -84,6 +91,8 @@ class Game:
         for event in pygame.event.get():
             if event.type == QUIT:
                 self.running = False
+            elif self._handle_merger_resolution_events(event):
+                continue
             elif event.type == VIDEORESIZE:
                 self.window_width, self.window_height = event.w, event.h
                 self.screen = pygame.display.set_mode(
@@ -93,6 +102,8 @@ class Game:
                 )
             elif event.type == MOUSEBUTTONDOWN:
                 current_player = self.players[self.logic.current_turn_index]
+                if not current_player.is_human:
+                    return
                 # Allow the human player to choose a new hotel to found
                 if self.founding_phase:
                     mouse_x, mouse_y = event.pos
@@ -174,22 +185,22 @@ class Game:
                                         self.corporations[chain].size = 0  # Reset absorbed chains
                                         self.corporations[chain].update_value()
 
-                                    absorbed_from_merge = absorb_independents(self.board, col, row, dominant)
-                                    self.corporations[dominant].size += absorbed_from_merge
-
                                     msg = f"Human triggered a merger. {dominant} is dominant."
                                     self.log_messages.append(msg)
                                     print(msg)
 
+                                     # NEW: Show merger resolution UI
+                                    self.show_merger_resolution_ui(dominant, losing_chains)
+
                                     current_player.remove_tile(tile_coord)
-                                    self.logic.turn_phase = "draw_tile"
+                                    self.logic.turn_phase = "buy_stock"
                                 elif result == True:
                                     # This brance handles independent placement
                                     msg = f"Human placed tile at {col+1}{chr(65+row)}"
                                     self.log_messages.append(msg)
                                     print(msg)
                                     current_player.remove_tile(tile_coord)
-                                    self.logic.turn_phase = "draw_tile"
+                                    self.logic.turn_phase = "buy_stock"
                                 elif isinstance(result, str):  # result is the chain name
                                     chain_name = result
                                     self.board.state[col][row] = {"owner": "HumanTile", "chain": chain_name}
@@ -205,12 +216,61 @@ class Game:
                                     # Update corporation size (placed tile + absorbed)
                                     self.corporations[chain_name].size += 1 + absorbed_count
                                     
-                                    self.logic.turn_phase = "draw_tile"
+                                    self.logic.turn_phase = "buy_stock"
                                 else:
                                     msg = f"Tile {col+1}{chr(65+row)} already occupied."
                                     self.log_messages.append(msg)
                                     print(msg)
                                 break
+                if self.logic.turn_phase == "buy_stock":
+                    mouse_x, mouse_y = event.pos
+                    num_of_active_corps = 0
+                    for corp in self.corporations.values():
+                        if corp.size >= 2:
+                            num_of_active_corps += 1
+                    if num_of_active_corps == 0:
+                        self.logic.turn_phase = "draw_tile"
+                    
+                    # Check if the "Pass" button was clicked
+                    pass_button_rect = pygame.Rect(
+                        self.window_width - self.right_sidebar_width + 10,
+                        self.status_area_height + 200,  # Adjust based on your UI layout
+                        100, 30
+                    )
+                    if pass_button_rect.collidepoint(mouse_x, mouse_y):
+                        self.logic.stocks_to_buy = 0
+                        self.logic.turn_phase = "draw_tile"
+                        self.log_messages.append(f"{current_player.name} passed on buying stocks")
+                        return
+                    
+                    # Handle stock purchases
+                    for corp in self.corporations.values():
+                        if corp.size < 2:  # Skip inactive chains
+                            continue
+                        
+                        # Check if the "Buy" button was clicked
+                        button_rect = pygame.Rect(
+                            self.window_width - 50,  # Adjust based on your UI layout
+                            self.status_area_height + 50 * list(self.corporations.values()).index(corp),
+                            40, 20
+                        )
+                        if button_rect.collidepoint(mouse_x, mouse_y):
+                            if self._can_afford_stock(current_player, corp):
+                                if current_player.buy_stock(corp.name, 1, corp.get_stock_price()):
+                                    corp.stocks_remaining -= 1
+                                    self.logic.stocks_to_buy -= 1
+                                    self.log_messages.append(
+                                        f"{current_player.name} bought 1 {corp.name} stock for ${corp.get_stock_price()}"
+                                    )
+                                    if self.logic.stocks_to_buy == 0:
+                                        self.logic.turn_phase = "draw_tile"
+                            else:
+                                self.log_messages.append(
+                                    f"{current_player.name} cannot afford {corp.name} stock"
+                                )
+    
+    def _can_afford_stock(self, player, corp):
+        return player.money >= corp.get_stock_price()
 
     def _finalize_chain_founding(self, chosen_chain):
         col, row = self.founding_tile_pos
@@ -227,10 +287,6 @@ class Game:
 
         # Set headquarters
         chosen_chain.place_headquarters(col, row)
-
-            
-        # Place the initial tile
-        #self.board.state[col][row] = {"owner": "HumanTile", "chain": chosen_chain.name}
         
         # Deduct stock for founder's bonus
         chosen_chain.stocks_remaining -= 1
@@ -243,7 +299,7 @@ class Game:
         self.founding_phase = False
         self.founding_tile_pos = None
         self.selected_tile_index = None
-        self.logic.turn_phase = "draw_tile"
+        self.logic.turn_phase = "buy_stock"
 
     def run(self):
         try:
@@ -431,6 +487,25 @@ class Game:
         if self.founding_phase:
             self._draw_chain_selection()
 
+        # --- Draw Stock Market UI if in Buy Stock Phase and at least 1 chain is founded ---
+        if self.logic.turn_phase == "buy_stock" and any(corp.size >= 2 for corp in self.corporations.values()):
+            # Darken the log area
+            overlay = pygame.Surface((log_area.width, log_area.height), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 128))  # Semi-transparent black
+            self.screen.blit(overlay, (log_area.x, log_area.y))
+            
+            # Draw the stock market UI
+            stock_market_rect = pygame.Rect(
+                self.window_width - self.right_sidebar_width, self.status_area_height,
+                self.right_sidebar_width, self.window_height - self.status_area_height
+            )
+            self.draw_stock_market(self.screen, stock_market_rect)
+
+        self._draw_merger_resolution()
+
+        if self.logic.turn_phase == "end_game":
+            self._draw_final_scores()
+
     def _draw_chain_selection(self):
         # Darken background
         overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
@@ -470,6 +545,225 @@ class Game:
             
             self.chain_options.append((btn_rect, chain))
             x += btn_width + 20
+
+    def draw_stock_market(self, surface, rect):
+        font = pygame.font.SysFont(None, 24)
+        header = font.render("Stock Market", True, (255, 255, 255))
+        surface.blit(header, (rect.x + 10, rect.y + 10))
+        
+        y = rect.y + 40
+        for corp in self.corporations.values():
+            if corp.size < 2:  # Skip inactive chains
+                continue
+            
+            # Colored name + price
+            name_text = font.render(f"{corp.name}:", True, corp.color)
+            price_text = font.render(f"${corp.get_stock_price()}", True, (255, 255, 255))
+            stocks_text = font.render(f"Stocks: {corp.stocks_remaining}", True, (255, 255, 255))
+            
+            # Draw corporation info
+            surface.blit(name_text, (rect.x + 10, y))
+            surface.blit(price_text, (rect.x + 150, y))
+            surface.blit(stocks_text, (rect.x + 10, y + 20))
+            
+            # Draw buy button
+            button_rect = pygame.Rect(rect.x + 250, y, 40, 20)
+            pygame.draw.rect(surface, (0, 255, 0), button_rect)
+            button_text = font.render("Buy", True, (0, 0, 0))
+            surface.blit(button_text, (button_rect.x + 5, button_rect.y + 2))
+            
+            y += 50
+        
+        # Draw "Pass" button
+        pass_button_rect = pygame.Rect(rect.x + 10, y, 100, 30)
+        pygame.draw.rect(surface, (255, 0, 0), pass_button_rect)
+        pass_text = font.render("Pass", True, (255, 255, 255))
+        surface.blit(pass_text, (pass_button_rect.x + 20, pass_button_rect.y + 5))
+
+    def show_merger_resolution_ui(self, dominant, losing_chains):
+        """Display merger resolution UI with bonuses and stock conversion"""
+        if not losing_chains:
+            return
+        self.merger_resolution_data = {
+            'dominant': dominant,
+            'losing_chains': losing_chains,
+            'current_chain_index': 0,
+            'completed': False
+        }
+        self.merger_phase = "show_bonuses"  # First show bonuses, then handle stock conversion
+
+    def _draw_merger_resolution(self):
+        """Draw the merger resolution UI"""
+        if not hasattr(self, 'merger_resolution_data'):
+            return
+        
+        # Darken background
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Draw resolution box
+        box_width = 600
+        box_height = 400
+        box_x = (self.window_width - box_width) // 2
+        box_y = (self.window_height - box_height) // 2
+        box_rect = pygame.Rect(box_x, box_y, box_width, box_height)
+        pygame.draw.rect(self.screen, (50, 50, 50), box_rect)
+        pygame.draw.rect(self.screen, (200, 200, 200), box_rect, 2)
+        
+        font = pygame.font.SysFont(None, 32)
+        small_font = pygame.font.SysFont(None, 24)
+        
+        if self.merger_phase == "show_bonuses":
+            # Show bonus distribution
+            chain = self.corporations[self.merger_resolution_data['losing_chains']
+                                    [self.merger_resolution_data['current_chain_index']]]
+            
+            # Draw chain info
+            title = font.render(f"Merger Resolution: {chain.name}", True, chain.color)
+            self.screen.blit(title, (box_x + 20, box_y + 20))
+            
+            # Get shareholders
+            shareholders = sorted(self.players,
+                                key=lambda p: p.stocks[chain.name],
+                                reverse=True)
+            
+            # Draw bonuses
+            y = box_y + 60
+            if len(shareholders) > 0:
+                majority_bonus = self.logic._calculate_majority_bonus(chain)
+                text = small_font.render(
+                    f"Majority: {shareholders[0].name} - ${majority_bonus}",
+                    True, (255, 255, 255)
+                )
+                self.screen.blit(text, (box_x + 40, y))
+                y += 30
+                
+            if len(shareholders) > 1:
+                minority_bonus = majority_bonus // 2
+                text = small_font.render(
+                    f"Minority: {shareholders[1].name} - ${minority_bonus}",
+                    True, (255, 255, 255)
+                )
+                self.screen.blit(text, (box_x + 40, y))
+                y += 30
+            
+            # Draw next button
+            next_button = pygame.Rect(box_x + box_width - 120, box_y + box_height - 50, 100, 30)
+            pygame.draw.rect(self.screen, (0, 200, 0), next_button)
+            next_text = font.render("Next", True, (255, 255, 255))
+            self.screen.blit(next_text, (next_button.x + 20, next_button.y + 5))
+            
+        elif self.merger_phase == "stock_conversion":
+            # Show stock conversion options
+            chain = self.corporations[self.merger_resolution_data['losing_chains']
+                                    [self.merger_resolution_data['current_chain_index']]]
+            
+            # Draw chain info
+            title = font.render(f"Stock Conversion: {chain.name}", True, chain.color)
+            self.screen.blit(title, (box_x + 20, box_y + 20))
+            
+            # Draw conversion options
+            y = box_y + 60
+            text = small_font.render(
+                "Convert 2:1 to dominant chain or sell for half price",
+                True, (255, 255, 255)
+            )
+            self.screen.blit(text, (box_x + 40, y))
+            y += 30
+            
+            # Draw conversion buttons
+            convert_button = pygame.Rect(box_x + 40, y, 200, 30)
+            pygame.draw.rect(self.screen, (0, 200, 0), convert_button)
+            convert_text = font.render("Convert", True, (255, 255, 255))
+            self.screen.blit(convert_text, (convert_button.x + 20, convert_button.y + 5))
+            
+            sell_button = pygame.Rect(box_x + 260, y, 200, 30)
+            pygame.draw.rect(self.screen, (200, 0, 0), sell_button)
+            sell_text = font.render("Sell", True, (255, 255, 255))
+            self.screen.blit(sell_text, (sell_button.x + 20, sell_button.y + 5))
+            
+        # Update display
+        pygame.display.flip()
+
+    def _handle_merger_resolution_events(self, event):
+        """Handle events during merger resolution"""
+        if not hasattr(self, 'merger_resolution_data') or not self.merger_resolution_data:
+            return False
+        
+        if event.type == MOUSEBUTTONDOWN:
+            mouse_x, mouse_y = event.pos
+            box_width = 600
+            box_height = 400
+            box_x = (self.window_width - box_width) // 2
+            box_y = (self.window_height - box_height) // 2
+            
+            if self.merger_phase == "show_bonuses":
+                # Check next button
+                next_button = pygame.Rect(box_x + box_width - 120, box_y + box_height - 50, 100, 30)
+                if next_button.collidepoint(mouse_x, mouse_y):
+                    self.merger_phase = "stock_conversion"
+                    return True
+                    
+            elif self.merger_phase == "stock_conversion":
+                # Handle stock conversion choices
+                convert_button = pygame.Rect(box_x + 40, box_y + 90, 200, 30)
+                sell_button = pygame.Rect(box_x + 260, box_y + 90, 200, 30)
+                
+                if convert_button.collidepoint(mouse_x, mouse_y):
+                    self._process_stock_conversion(convert=True)
+                    return True
+                elif sell_button.collidepoint(mouse_x, mouse_y):
+                    self._process_stock_conversion(convert=False)
+                    return True
+                    
+        return False
+
+    def _process_stock_conversion(self, convert=True):
+        """Process stock conversion choice"""
+        chain_name = self.merger_resolution_data['losing_chains'][
+            self.merger_resolution_data['current_chain_index']
+        ]
+        dominant = self.merger_resolution_data['dominant']
+        
+        player = self.players[0]  # Human player
+        stocks = player.stocks.get(chain_name, 0)
+        
+        if convert:
+            # Convert 2:1
+            converted = min(stocks // 2, self.corporations[dominant].stocks_remaining)
+            player.stocks[dominant] = player.stocks.get(dominant, 0) + converted
+            player.stocks[chain_name] = max(0, player.stocks.get(chain_name, 0) - converted * 2)
+            self.corporations[dominant].stocks_remaining -= converted
+            
+            # Log the conversion
+            self.log_messages.append(
+                f"{player.name} converted {converted * 2} {chain_name} stocks "
+                f"to {converted} {dominant} stocks"
+            )
+        else:
+            # Sell for half price
+            sell_price = self.corporations[chain_name].get_stock_price() // 2
+            total = stocks * sell_price
+            player.money += total
+            player.stocks[chain_name] = 0
+            
+            # Log the sale
+            self.log_messages.append(
+                f"{player.name} sold {stocks} {chain_name} stocks for ${total}"
+            )
+        
+        # Move to next chain or complete
+        self.merger_resolution_data['current_chain_index'] += 1
+        if self.merger_resolution_data['current_chain_index'] >= len(
+            self.merger_resolution_data['losing_chains']):
+            # Merger complete
+            del self.merger_resolution_data
+            self.merger_phase = None
+        else:
+            # Show next chain's bonuses
+            self.merger_phase = "show_bonuses"
+
 
 
 if __name__ == "__main__":

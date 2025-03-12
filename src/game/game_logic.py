@@ -8,6 +8,8 @@ class GameLogic:
         self.current_turn_index = 0
         self.corporations = corporations
         self.turn_phase = "tile_placement"
+        self.turn_phases = ["tile_placement", "buy_stock", "draw_tile", "end_turn", "end_game"]
+        self.stocks_to_buy = 3
 
     def get_current_player(self):
         return self.players[self.current_turn_index]
@@ -35,7 +37,7 @@ class GameLogic:
                     log_messages.append(
                         f"{current_player.name} discarded {len(dead_tiles)} dead tiles"
                     )
-                self.turn_phase = "draw_tile"
+                self.turn_phase = "buy_stock"
                 return
 
             col, row = tile_coord
@@ -65,7 +67,7 @@ class GameLogic:
                         f"{current_player.name} founded {chosen_chain.name} "
                         f"at {col+1}{chr(65+row)} (size: {chosen_chain.size})"
                     )
-                self.turn_phase = "draw_tile"
+                self.turn_phase = "buy_stock"
 
             elif result == "merge":
                 neighbors = self.board.get_neighbors(col, row)
@@ -78,17 +80,27 @@ class GameLogic:
                 dominant, absorbed_count, losing_chains = self.board.merge_chains(
                     col, row, adjacent_chains, self.corporations
                 )
-                merged_absorption = absorb_independents(self.board, col, row, dominant)
+                # NEW: Full merger resolution
+                self.resolve_merger(
+                    self.corporations[dominant],
+                    [self.corporations[chain] for chain in losing_chains],
+                    log_messages
+                )
                 
-                self.corporations[dominant].size += absorbed_count + merged_absorption
-                for chain in losing_chains:
-                    self.corporations[chain].size = 0
+                # Update chain sizes
+                self.corporations[dominant].size += absorbed_count
+                merged_absorption = absorb_independents(self.board, col, row, dominant)
+                self.corporations[dominant].size += merged_absorption
+                
+                log_messages.append(
+                    f"Merger resolved! {dominant} now has {self.corporations[dominant].size} tiles"
+    )
                 
                 current_player.remove_tile(tile_coord)
                 log_messages.append(
                     f"{current_player.name} merged chains into {dominant}"
                 )
-                self.turn_phase = "draw_tile"
+                self.turn_phase = "buy_stock"
 
             elif isinstance(result, str):  # Joined existing chain
                 chain_name = result
@@ -100,19 +112,39 @@ class GameLogic:
                     f"{current_player.name} expanded {chain_name} at {col+1}{chr(65+row)} "
                     f"(+{absorbed_count} tiles)"
                 )
-                self.turn_phase = "draw_tile"
+                self.turn_phase = "buy_stock"
 
             elif result is True:  # Independent placement (no absorption)
                 current_player.remove_tile(tile_coord)
                 log_messages.append(
                     f"{current_player.name} placed independent tile at {col+1}{chr(65+row)}"
                 )
-                self.turn_phase = "draw_tile"
+                self.turn_phase = "buy_stock"
 
             else:  # Invalid placement
                 log_messages.append(
                     f"{current_player.name} failed to place tile at {col+1}{chr(65+row)}"
                 )
+                self.turn_phase = "tile_placement"
+
+        elif self.turn_phase == "buy_stock":
+            if current_player.is_human:
+                # Handled via main.py UI
+                pass
+            else:
+                purchases = current_player.decide_stock_purchases(
+                    self.corporations, current_player.money
+                )
+                for chain_name in purchases[:3]:  # Enforce max 3 purchases
+                    corp = self.corporations[chain_name]
+                    if corp.stocks_remaining > 0 and current_player.money >= corp.get_stock_price():
+                        current_player.buy_stock(chain_name, 1, corp.get_stock_price())
+                        corp.stocks_remaining -= 1
+                        self.stocks_to_buy -= 1
+                        log_messages.append(f"{current_player.name} bought 1 {chain_name} stock")
+                        
+                # Force exit after processing
+                self.stocks_to_buy = 0
                 self.turn_phase = "draw_tile"
 
         elif self.turn_phase == "draw_tile":
@@ -123,5 +155,75 @@ class GameLogic:
             self.turn_phase = "end_turn"
 
         elif self.turn_phase == "end_turn":
+            if self.check_end_game():
+                self.turn_phase="end_game"
             self.current_turn_index = (self.current_turn_index + 1) % len(self.players)
+            self.stocks_to_buy = 3
             self.turn_phase = "tile_placement"
+
+        elif self.turn_phase== "end_game":
+            self.final_scoring()
+
+    def resolve_merger(self, dominant_chain, absorbed_chains, log_messages):
+        # Calculate majority/minority bonuses
+        for chain in absorbed_chains:
+            shareholders = sorted(self.players,
+                                key=lambda p: p.stocks[chain.name],
+                                reverse=True)
+            
+            # Award bonuses
+            majority_bonus = self._calculate_majority_bonus(chain)
+            minority_bonus = majority_bonus // 2
+            
+            if len(shareholders) > 0:
+                shareholders[0].money += majority_bonus
+                log_messages.append(
+                    f"{shareholders[0].name} gets {chain.name} majority bonus (${majority_bonus})"
+                )
+            if len(shareholders) > 1:
+                shareholders[1].money += minority_bonus
+                log_messages.append(
+                    f"{shareholders[1].name} gets {chain.name} minority bonus (${minority_bonus})"
+                )
+            
+            # Handle stock conversion
+            self._process_stock_conversion(dominant_chain, chain)
+            
+            # Reset absorbed chain
+            chain.size = 0
+            chain.stocks_remaining += sum(p.stocks[chain.name] for p in self.players)
+            chain.headquarters_placed = False
+
+    def _calculate_majority_bonus(self, chain):
+        size_bonus = {
+            2: 1000, 3: 1000, 4: 1000, 5: 1500,
+            6: 1500, 7: 2000, 8: 2000, 9: 2500,
+            10: 2500, 11: 3000
+        }
+        return size_bonus.get(min(chain.size, 11), 3000)
+
+    def _process_stock_conversion(self, dominant, absorbed):
+        for player in self.players:
+            absorbed_stocks = player.stocks[absorbed.name]
+            if absorbed_stocks > 0:
+                # Automatic 2:1 conversion
+                converted = min(absorbed_stocks // 2, dominant.stocks_remaining)
+                player.stocks[dominant.name] += converted
+                player.stocks[absorbed.name] -= converted * 2
+                dominant.stocks_remaining -= converted
+                
+                # Handle remaining odd stock
+                if absorbed_stocks % 2 != 0:
+                    player.money += absorbed.get_stock_price() // 2
+                    player.stocks[absorbed.name] -= 1
+
+    def check_end_game(self):
+        for corp in self.corporations.values():
+            if corp.size >= 41:
+                return True
+        for _ in self.corporations.values():
+            if corp.size > 0 and not corp.is_safe():
+                return False
+
+    def final_scoring(self):
+        print("game over")
