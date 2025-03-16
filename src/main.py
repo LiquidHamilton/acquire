@@ -5,13 +5,15 @@ from utils.constants import CORPORATION_COLORS
 from utils.helpers import *
 
 #TODO: Not properly absorbing independent tiles.
+#TODO: Move all logic to game_logic. It's too confusing for player logic separate from AI logic.
 #TODO: Stock market buttons are not aligned correctly with clicks
-#TODO: Endgame & Scoring
-#TODO: Stock Price Calculation not basing on size properly
-#TODO: Stop from allowing buying negative stocks. Cap at 25 per corp.
 #TODO: Merger resolution on AI turn does not open window for player to act. (they should act in turn order)
-#TODO: Players not increasing their money after merger resolution (do stocks replenish?)
-#TODO: Multi Merging (3 or more corps)
+#TODO: Likewise, when player merges, bonuses are not given.
+#TODO: Players not increasing their money after merger resolution (sell/trade) and stocks don't replenish. (it might on AI)
+#TODO: Merging does not return the losing corp to the pool of available corps. (it might on AI)
+#TODO: Founding a chain with no avaiable chains still lets you place the tile and it shouldn't.
+#TODO: Test Multi Merging (3 or more corps)
+#TODO: Endgame & Scoring Not Yet Implemented
 
 class Game:
     def __init__(self):
@@ -166,6 +168,7 @@ class Game:
                                     self.founding_tile_pos = (col, row)
 
                                 elif result == "merge":
+                                    #game.game_logic.py()
                                     neighbors = self.board.get_neighbors(col, row)
                                     adjacent_chains = set()
                                     for (nc, nr) in neighbors:
@@ -177,7 +180,7 @@ class Game:
                                         col, row, adjacent_chains, self.corporations
                                     )
                                                                     
-                                    # After merger resolution, absorb independents around merged area
+                                    #After merger resolution, absorb independents around merged area
                                     merged_absorption = absorb_independents(self.board, col, row, dominant)
                                     self.corporations[dominant].size += (absorbed_count + merged_absorption)
                                     
@@ -189,7 +192,7 @@ class Game:
                                     self.log_messages.append(msg)
                                     print(msg)
 
-                                     # NEW: Show merger resolution UI
+                                     #NEW: Show merger resolution UI
                                     self.show_merger_resolution_ui(dominant, losing_chains)
 
                                     current_player.remove_tile(tile_coord)
@@ -256,7 +259,7 @@ class Game:
                         )
                         if button_rect.collidepoint(mouse_x, mouse_y):
                             if self._can_afford_stock(current_player, corp):
-                                if current_player.buy_stock(corp.name, 1, corp.get_stock_price()):
+                                if current_player.buy_stock(corp.name, 1, corp.get_stock_price()) and corp.stocks_remaining > 1:
                                     corp.stocks_remaining -= 1
                                     self.logic.stocks_to_buy -= 1
                                     self.log_messages.append(
@@ -631,7 +634,7 @@ class Game:
             # Draw bonuses
             y = box_y + 60
             if len(shareholders) > 0:
-                majority_bonus = self.logic._calculate_majority_bonus(chain)
+                majority_bonus = chain.current_bonus
                 text = small_font.render(
                     f"Majority: {shareholders[0].name} - ${majority_bonus}",
                     True, (255, 255, 255)

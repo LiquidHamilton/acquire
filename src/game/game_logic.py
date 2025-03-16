@@ -70,6 +70,7 @@ class GameLogic:
                 self.turn_phase = "buy_stock"
 
             elif result == "merge":
+                # Common Merger Logic
                 neighbors = self.board.get_neighbors(col, row)
                 adjacent_chains = set()
                 for (nc, nr) in neighbors:
@@ -80,7 +81,7 @@ class GameLogic:
                 dominant, absorbed_count, losing_chains = self.board.merge_chains(
                     col, row, adjacent_chains, self.corporations
                 )
-                # NEW: Full merger resolution
+                # Full merger resolution
                 self.resolve_merger(
                     self.corporations[dominant],
                     [self.corporations[chain] for chain in losing_chains],
@@ -94,7 +95,7 @@ class GameLogic:
                 
                 log_messages.append(
                     f"Merger resolved! {dominant} now has {self.corporations[dominant].size} tiles"
-    )
+                )
                 
                 current_player.remove_tile(tile_coord)
                 log_messages.append(
@@ -172,7 +173,7 @@ class GameLogic:
                                 reverse=True)
             
             # Award bonuses
-            majority_bonus = self._calculate_majority_bonus(chain)
+            majority_bonus = chain.current_bonus
             minority_bonus = majority_bonus // 2
             
             if len(shareholders) > 0:
@@ -189,33 +190,28 @@ class GameLogic:
             # Handle stock conversion
             self._process_stock_conversion(dominant_chain, chain)
             
-            # Reset absorbed chain
+            # Reset absorbed chain MAKE SURE TO DIFFERENTIATE BETWEEN HUMAN AND AI ONCE LOGIC IS MOVED
             chain.size = 0
             chain.stocks_remaining += sum(p.stocks[chain.name] for p in self.players)
             chain.headquarters_placed = False
 
-    def _calculate_majority_bonus(self, chain):
-        size_bonus = {
-            2: 1000, 3: 1000, 4: 1000, 5: 1500,
-            6: 1500, 7: 2000, 8: 2000, 9: 2500,
-            10: 2500, 11: 3000
-        }
-        return size_bonus.get(min(chain.size, 11), 3000)
-
     def _process_stock_conversion(self, dominant, absorbed):
         for player in self.players:
-            absorbed_stocks = player.stocks[absorbed.name]
-            if absorbed_stocks > 0:
-                # Automatic 2:1 conversion
-                converted = min(absorbed_stocks // 2, dominant.stocks_remaining)
-                player.stocks[dominant.name] += converted
-                player.stocks[absorbed.name] -= converted * 2
-                dominant.stocks_remaining -= converted
-                
-                # Handle remaining odd stock
-                if absorbed_stocks % 2 != 0:
-                    player.money += absorbed.get_stock_price() // 2
-                    player.stocks[absorbed.name] -= 1
+            if player.is_human == True:
+                return
+            else:
+                absorbed_stocks = player.stocks[absorbed.name]
+                if absorbed_stocks > 0:
+                    # Automatic 2:1 conversion
+                    converted = min(absorbed_stocks // 2, dominant.stocks_remaining)
+                    player.stocks[dominant.name] += converted
+                    player.stocks[absorbed.name] -= converted * 2
+                    dominant.stocks_remaining -= converted
+                    
+                    # Handle remaining odd stock
+                    if absorbed_stocks % 2 != 0:
+                        player.money += absorbed.get_stock_price() // 2
+                        player.stocks[absorbed.name] -= 1
 
     def check_end_game(self):
         for corp in self.corporations.values():
