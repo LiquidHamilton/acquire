@@ -12,31 +12,29 @@ def draw_tile_icon(surface, tile_coord, rect, font):
     surface.blit(text_surface, text_rect)
 
 def absorb_independents(board, col, row, chain_name):
-    """Flood-fill from placed tile to absorb ALL contiguous independents"""
-    stack = [(col, row)]
-    visited = set()
+    """
+    Recursively absorb independent tiles adjacent to the given position
+    Returns count of independents absorbed
+    """
     absorbed_count = 0
-
-    while stack:
-        c, r = stack.pop()
-        if (c, r) in visited:
-            continue
-        visited.add((c, r))
-
-        # Skip invalid coordinates
-        if not (0 <= c < BOARD_WIDTH and 0 <= r < BOARD_HEIGHT):
-            continue
-
-        cell = board.state[c][r]
-        if cell and cell["chain"] is None:
-            # Convert to chain and count
-            cell["chain"] = chain_name
-            absorbed_count += 1
-            
-            # Add orthogonal neighbors
-            for (nc, nr) in board.get_neighbors(c, r):
-                stack.append((nc, nr))
-
+    
+    # Get all directly adjacent tiles
+    neighbors = board.get_neighbors(col, row)
+    
+    # First pass: mark all independents to be absorbed
+    to_absorb = []
+    for ncol, nrow in neighbors:
+        # Check if neighbor exists and is independent
+        if board.state[ncol][nrow] and board.state[ncol][nrow]["chain"] is None:
+            to_absorb.append((ncol, nrow))
+    
+    # Second pass: absorb all marked tiles
+    for ncol, nrow in to_absorb:
+        board.state[ncol][nrow]["chain"] = chain_name
+        absorbed_count += 1
+        # Recursively absorb independents adjacent to this newly absorbed tile
+        absorbed_count += absorb_independents(board, ncol, nrow, chain_name)
+    
     return absorbed_count
 
 

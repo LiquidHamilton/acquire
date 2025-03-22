@@ -89,6 +89,8 @@ class Corporation:
         return CORPORATION_COLORS.get(self.name, (128,128,128))
     
     def place_headquarters(self, col, row):
+        if self.headquarters_placed:
+            return
         self.headquarters_placed = True
         self.hq_position = (col, row)
 
